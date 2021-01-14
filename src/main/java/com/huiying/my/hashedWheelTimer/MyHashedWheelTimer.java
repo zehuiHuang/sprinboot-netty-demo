@@ -22,18 +22,16 @@ import java.util.concurrent.atomic.AtomicLong;
 public class MyHashedWheelTimer implements Timer {
     static final InternalLogger logger = InternalLoggerFactory.getInstance(HashedWheelTimer.class);
 
-
-    //工作线程
-    private final MyHashedWheelTimer.Worker worker;
     //添加的任务就放在该任务队列当中
     private final Queue<MyHashedWheelTimer.HashedWheelTimeout> timeouts;
     //关闭的任务就放到该任务队列当中
     private final Queue<MyHashedWheelTimer.HashedWheelTimeout> cancelledTimeouts;
     //时间轮（一个HashedWheelBucket的数组链表结构）
     private final MyHashedWheelTimer.HashedWheelBucket[] wheel;
-    //
+    //工作线程启动入口
+    private final MyHashedWheelTimer.Worker worker;
+    //正常的工作线程
     private final Thread workerThread;
-
 
     //
     private static final ResourceLeakDetector<MyHashedWheelTimer> leakDetector;
@@ -78,7 +76,6 @@ public class MyHashedWheelTimer implements Timer {
             String resourceType = StringUtil.simpleClassName(HashedWheelTimer.class);
             logger.error("You are creating too many " + resourceType + " instances. " + resourceType + " is a shared resource that must be reused across the JVM,so that only a few instances are created.");
         }
-
     }
 
     /**
@@ -127,7 +124,16 @@ public class MyHashedWheelTimer implements Timer {
         this(threadFactory, tickDuration, unit, ticksPerWheel, leakDetection, -1L);
     }
 
-
+    /**
+     * 最细构造函数
+     *
+     * @param threadFactory
+     * @param tickDuration
+     * @param unit
+     * @param ticksPerWheel
+     * @param leakDetection
+     * @param maxPendingTimeouts
+     */
     public MyHashedWheelTimer(ThreadFactory threadFactory, long tickDuration, TimeUnit unit, int ticksPerWheel, boolean leakDetection, long maxPendingTimeouts) {
         this.worker = new MyHashedWheelTimer.Worker();
         this.startTimeInitialized = new CountDownLatch(1);
@@ -168,11 +174,18 @@ public class MyHashedWheelTimer implements Timer {
                 if (INSTANCE_COUNTER.incrementAndGet() > 64 && WARNED_TOO_MANY_INSTANCES.compareAndSet(false, true)) {
                     reportTooManyInstances();
                 }
-
             }
         }
     }
 
+    /**
+     * 添加任务
+     *
+     * @param task
+     * @param delay
+     * @param unit
+     * @return
+     */
     @Override
     public Timeout newTimeout(TimerTask task, long delay, TimeUnit unit) {
         if (task == null) {
@@ -190,7 +203,6 @@ public class MyHashedWheelTimer implements Timer {
                 if (delay > 0L && deadline < 0L) {
                     deadline = 9223372036854775807L;
                 }
-
                 MyHashedWheelTimer.HashedWheelTimeout timeout = new MyHashedWheelTimer.HashedWheelTimeout(this, task, deadline);
                 this.timeouts.add(timeout);
                 return timeout;
@@ -215,14 +227,14 @@ public class MyHashedWheelTimer implements Timer {
             default:
                 throw new Error("Invalid WorkerState");
         }
-
         while (this.startTime == 0L) {
             try {
+                System.out.println("startTimeInitialized is await .........");
                 this.startTimeInitialized.await();
+                System.out.println("startTimeInitialized is await end ......");
             } catch (InterruptedException var2) {
             }
         }
-
     }
 
 
@@ -246,8 +258,7 @@ public class MyHashedWheelTimer implements Timer {
         } else {
             ticksPerWheel = normalizeTicksPerWheel(ticksPerWheel);
             MyHashedWheelTimer.HashedWheelBucket[] wheel = new MyHashedWheelTimer.HashedWheelBucket[ticksPerWheel];
-
-            for(int i = 0; i < wheel.length; ++i) {
+            for (int i = 0; i < wheel.length; ++i) {
                 wheel[i] = new MyHashedWheelTimer.HashedWheelBucket();
             }
             return wheel;
@@ -256,13 +267,14 @@ public class MyHashedWheelTimer implements Timer {
 
     /**
      * 初始化时间轮的slot数量
+     *
      * @param ticksPerWheel
      * @return
      */
     private static int normalizeTicksPerWheel(int ticksPerWheel) {
         int normalizedTicksPerWheel;
         //取一个不小于 ticksPerWheel 的最小 2 次幂
-        for(normalizedTicksPerWheel = 1; normalizedTicksPerWheel < ticksPerWheel; normalizedTicksPerWheel <<= 1) {
+        for (normalizedTicksPerWheel = 1; normalizedTicksPerWheel < ticksPerWheel; normalizedTicksPerWheel <<= 1) {
         }
         return normalizedTicksPerWheel;
     }
@@ -278,12 +290,15 @@ public class MyHashedWheelTimer implements Timer {
             this.unprocessedTimeouts = new HashSet();
         }
 
+        //任务执行
         public void run() {
+            System.out.println("is runing 。。。。。");
             MyHashedWheelTimer.this.startTime = System.nanoTime();
             if (MyHashedWheelTimer.this.startTime == 0L) {
                 MyHashedWheelTimer.this.startTime = 1L;
             }
-
+            //目的是在工作线程初始化startTime后，主线程才可以继续向后执行
+            //在主线程中有一个await（目的是为了初始化startTime），执行countDown唤醒主线程继续执行
             MyHashedWheelTimer.this.startTimeInitialized.countDown();
 
             int idx;
@@ -439,6 +454,7 @@ public class MyHashedWheelTimer implements Timer {
                 }
             }
         }
+
         @Override
         public Timer timer() {
             return null;
