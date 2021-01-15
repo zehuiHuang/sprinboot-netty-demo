@@ -113,7 +113,7 @@ public class MyHashedWheelTimer implements Timer {
     }
 
     public MyHashedWheelTimer(ThreadFactory threadFactory, long tickDuration, TimeUnit unit) {
-        this(threadFactory, tickDuration, unit, 512);
+        this(threadFactory, tickDuration, unit, 4);
     }
 
     public MyHashedWheelTimer(ThreadFactory threadFactory, long tickDuration, TimeUnit unit, int ticksPerWheel) {
@@ -240,6 +240,7 @@ public class MyHashedWheelTimer implements Timer {
 
     /**
      * 时间轮定时任务停止
+     *
      * @return
      */
     @Override
@@ -267,7 +268,7 @@ public class MyHashedWheelTimer implements Timer {
                     var7 = true;
                     closed = false;
 
-                    while(this.workerThread.isAlive()) {
+                    while (this.workerThread.isAlive()) {
                         this.workerThread.interrupt();
 
                         try {
@@ -287,7 +288,7 @@ public class MyHashedWheelTimer implements Timer {
                     if (var7) {
                         INSTANCE_COUNTER.decrementAndGet();
                         if (this.leak != null) {
-                             closed = this.leak.close(this);
+                            closed = this.leak.close(this);
                             assert closed;
                         }
                     }
@@ -384,21 +385,25 @@ public class MyHashedWheelTimer implements Timer {
             MyHashedWheelTimer.HashedWheelBucket[] var5 = MyHashedWheelTimer.this.wheel;
             int var2 = var5.length;
 
+            //对时间轮中未处理的任务做处理（移除时间轮中的任务，同时放入到unprocessedTimeouts结构中）
             for (idx = 0; idx < var2; ++idx) {
                 bucket = var5[idx];
+                //循环时间轮数组中的bucket，分别对每个bucket里的还没执行完切没被关闭的任务移动到unprocessedTimeouts中（从头节点开始住个进行移动）
                 bucket.clearTimeouts(this.unprocessedTimeouts);
             }
 
+            //对还在任务队列的任务做处理（直接取出任务队列的任务并放入unprocessedTimeouts中）
             while (true) {
+                //对还没放入时间轮中的任务队列中的任务做处理
                 MyHashedWheelTimer.HashedWheelTimeout timeout = (MyHashedWheelTimer.HashedWheelTimeout) MyHashedWheelTimer.this.timeouts.poll();
-                System.out.println("timeout is null:"+timeout==null);
+                System.out.println("timeout is null:" + timeout == null);
                 if (timeout == null) {
+                    //如果任务队列已经没有任务了，则直接删除已经关掉的任务
                     this.processCancelledTasks();
                     return;
                 }
-
+                //如果任务队列中还有任务，且没有被关闭，则放入到unprocessedTimeouts结构中
                 if (!timeout.isCancelled()) {
-                    System.out.println("unprocessedTimeouts.add///////////////////");
                     this.unprocessedTimeouts.add(timeout);
                 }
             }
@@ -450,9 +455,8 @@ public class MyHashedWheelTimer implements Timer {
         }
 
         /**
-         *
          * 计算下次 tick 的时间, 然后sleep 到下次 tick（解释：tick指针只有在拨动后，再回执行拨动期间经过的slot对应的任务）
-         *等待下次tick的时间（从定时启动开始到当前时间的时间长度）
+         * 等待下次tick的时间（从定时启动开始到当前时间的时间长度）
          *
          * @return
          */
@@ -605,6 +609,7 @@ public class MyHashedWheelTimer implements Timer {
 
         /**
          * 执行某slot下HashedWheelBucket中的任务
+         *
          * @param deadline
          */
         public void expireTimeouts(long deadline) {
@@ -658,11 +663,12 @@ public class MyHashedWheelTimer implements Timer {
         }
 
         /**
-         *
          * 清除bucket中所有的链表结构数据 并返回所有没执行的任务
+         *
          * @param set
          */
         public void clearTimeouts(Set<Timeout> set) {
+            //循环的次数是该bucket的个数（从头节点开始住个移动到set当中）
             while (true) {
                 MyHashedWheelTimer.HashedWheelTimeout timeout = this.pollTimeout();
                 if (timeout == null) {
@@ -676,6 +682,7 @@ public class MyHashedWheelTimer implements Timer {
         }
 
         /**
+         * 把头节点的next、pre、bucket都清除掉，并且返回头节点
          *
          * @return
          */
@@ -686,21 +693,19 @@ public class MyHashedWheelTimer implements Timer {
             } else {
                 MyHashedWheelTimer.HashedWheelTimeout next = head.next;
                 if (next == null) {
-                    this.tail = this.head = null;
+                    this.tail = this.head = null;//取消bucket中的头未指针的引用
                 } else {
-                    //把头节点的next的任务数据设置成头节点
+                    //把头节点指针移动到下一个节点（第二个节点）上
                     this.head = next;
-                    //把之前的头头节点设置成null
+                    //把第二个节点与第一个节点断开连接
                     next.prev = null;
                 }
-                //把
+                //把第一个节点和第二个节点断开
                 head.next = null;
-                head.prev = null;
-                head.bucket = null;
+                head.prev = null;//第一个节点的上一个节点断开（起到预防作用，目前头节点的pre应该会一直为null）
+                head.bucket = null;//把当前的任务和bucket的关联解除
                 return head;
             }
         }
     }
-
-
 }
